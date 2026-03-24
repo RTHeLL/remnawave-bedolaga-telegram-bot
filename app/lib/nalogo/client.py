@@ -6,6 +6,8 @@ Based on PHP library's ApiClient class.
 import json
 from typing import Any
 
+import structlog
+
 from ._http import AsyncHTTPClient
 from .auth import AuthProviderImpl
 from .income import IncomeAPI
@@ -13,6 +15,9 @@ from .payment_type import PaymentTypeAPI
 from .receipt import ReceiptAPI
 from .tax import TaxAPI
 from .user import UserAPI
+
+
+logger = structlog.get_logger(__name__)
 
 
 class Client:
@@ -93,7 +98,10 @@ class Client:
             UnauthorizedException: For invalid credentials
             DomainException: For other API errors
         """
-        return await self.auth_provider.create_new_access_token(username, password)
+        logger.info(f'[NaloGO Client] create_new_access_token username: {username[:10]}...')
+        token = await self.auth_provider.create_new_access_token(username, password)
+        logger.info(f'[NaloGO Client] create_new_access_token token: {token[:100]}...')
+        return token
 
     async def create_phone_challenge(self, phone: str) -> dict[str, Any]:
         """

@@ -133,8 +133,10 @@ class AuthProviderImpl(AuthProvider):
             'password': password,
             'deviceInfo': self.device_info.model_dump(),
         }
+        logger.info(f'[NaloGO AuthProviderImpl] create_new_access_token request_data: {request_data}')
 
         async with httpx.AsyncClient(proxy=self.proxy_url) as client:
+            logger.info(f'[NaloGO AuthProviderImpl] create_new_access_token sending request to {self.base_url_v1}/auth/lkfl')
             response = await client.post(
                 f'{self.base_url_v1}/auth/lkfl',
                 json=request_data,
