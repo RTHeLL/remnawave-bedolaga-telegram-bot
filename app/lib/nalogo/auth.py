@@ -140,6 +140,7 @@ class AuthProviderImpl(AuthProvider):
                 timeout=10.0,
             )
 
+            print(f"[NaloGO AuthProviderImpl] create_new_access_token status: code: {response.status_code}, text: {response.text}")
             raise_for_status(response)
 
             # Store and return token
