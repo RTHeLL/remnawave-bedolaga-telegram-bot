@@ -281,7 +281,9 @@ class NaloGoService:
     async def authenticate(self) -> bool:
         """Аутентификация в сервисе NaloGO."""
         if not self.configured:
+            logger.info(f'[NaloGO Service] not configured')
             return False
+        logger.info(f'[NaloGO Service] configured')
 
         # try:
         logger.info(f'[NaloGO Service] authenticate inn: {self.inn[:10]}...')
@@ -344,7 +346,9 @@ class NaloGoService:
         # ЭТАП 1: Аутентификация
         # Если не прошла — чек точно не создавался, безопасно добавить в очередь
         try:
+            logger.info(f'[NaloGO Service] try to authenticate')
             if not hasattr(self.client, '_access_token') or not self.client._access_token:
+                logger.info(f'[NaloGO Service] no access token')
                 auth_success = await self.authenticate()
                 logger.info(f'[NaloGO Service] auth_success: {auth_success}')
                 if not auth_success:
