@@ -346,24 +346,28 @@ class NaloGoService:
         try:
             if not hasattr(self.client, '_access_token') or not self.client._access_token:
                 auth_success = await self.authenticate()
+                logger.info(f'[NaloGO Service] auth_success: {auth_success}')
                 if not auth_success:
                     # Аутентификация не прошла — чек не создавался, безопасно в очередь
+                    logger.info(f'[NaloGO Service] auth_success: {auth_success}')
                     if queue_on_failure:
+                        logger.info(f'[NaloGO Service] queue_on_failure: {queue_on_failure}')
                         await self._queue_receipt(
                             name, amount, quantity, client_info, payment_id, telegram_user_id, amount_kopeks
                         )
                     return None
         except Exception as auth_error:
             # Ошибка аутентификации — чек не создавался, безопасно в очередь
+            error_msg = traceback.format_exc()
+            logger.info(f'[NaloGO Service] error_msg: {error_msg}')
             if self._is_service_unavailable(auth_error):
-                error_msg = traceback.format_exc()
-                logger.error(f'[NaloGO Service] authenticate error: {error_msg}')
                 logger.warning(
                     'NaloGO недоступен при аутентификации, чек в очередь (payment_id=, сумма=₽)',
                     payment_id=payment_id,
                     amount=amount,
                 )
                 if queue_on_failure:
+                    logger.info(f'[NaloGO Service] queue_on_failure: {queue_on_failure}')
                     await self._queue_receipt(
                         name, amount, quantity, client_info, payment_id, telegram_user_id, amount_kopeks
                     )
@@ -375,6 +379,7 @@ class NaloGoService:
         # Если аутентификация прошла и получили таймаут — чек МОГ быть создан!
         # НЕ добавляем в очередь, требуется ручная проверка
         try:
+            logger.info(f'[NaloGO Service] create_receipt')
             income_api = self.client.income()
 
             # Создаем клиента, если передана информация
