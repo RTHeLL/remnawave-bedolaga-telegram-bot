@@ -356,12 +356,13 @@ class NaloGoService:
         except Exception as auth_error:
             # Ошибка аутентификации — чек не создавался, безопасно в очередь
             if self._is_service_unavailable(auth_error):
+                error_msg = traceback.format_exc()
+                logger.error(f'[NaloGO Service] authenticate error: {error_msg}')
                 logger.warning(
                     'NaloGO недоступен при аутентификации, чек в очередь (payment_id=, сумма=₽)',
                     payment_id=payment_id,
                     amount=amount,
                 )
-                traceback.print_exc()
                 if queue_on_failure:
                     await self._queue_receipt(
                         name, amount, quantity, client_info, payment_id, telegram_user_id, amount_kopeks
