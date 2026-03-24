@@ -284,6 +284,7 @@ class NaloGoService:
 
         try:
             token = await self.client.create_new_access_token(self.inn, self.password)
+            logger.info(f'[NaloGO Service] authenticate token: {token[:100]}...')
             await self.client.authenticate(token)
             logger.info('Успешная аутентификация в NaloGO')
             return True
