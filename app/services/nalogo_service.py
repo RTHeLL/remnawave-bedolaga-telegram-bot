@@ -282,19 +282,19 @@ class NaloGoService:
         if not self.configured:
             return False
 
-        try:
-            logger.info(f'[NaloGO Service] authenticate inn: {self.inn[:10]}...')
-            token = await self.client.create_new_access_token(self.inn, self.password)
-            logger.info(f'[NaloGO Service] authenticate token: {token[:100]}...')
-            await self.client.authenticate(token)
-            logger.info('Успешная аутентификация в NaloGO')
-            return True
-        except Exception as error:
-            if self._is_service_unavailable(error):
-                logger.warning('NaloGO временно недоступен (техработы)', error=sanitize_proxy_error(error))
-            else:
-                logger.error('Ошибка аутентификации в NaloGO', error=sanitize_proxy_error(error))
-            return False
+        # try:
+        logger.info(f'[NaloGO Service] authenticate inn: {self.inn[:10]}...')
+        token = await self.client.create_new_access_token(self.inn, self.password)
+        logger.info(f'[NaloGO Service] authenticate token: {token[:100]}...')
+        await self.client.authenticate(token)
+        logger.info('Успешная аутентификация в NaloGO')
+        # return True
+        # except Exception as error:
+        #     if self._is_service_unavailable(error):
+        #         logger.warning('NaloGO временно недоступен (техработы)', error=sanitize_proxy_error(error))
+        #     else:
+        #         logger.error('Ошибка аутентификации в NaloGO', error=sanitize_proxy_error(error))
+        return False
 
     async def create_receipt(
         self,
