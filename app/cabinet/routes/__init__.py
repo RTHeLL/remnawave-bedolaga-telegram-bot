@@ -53,6 +53,7 @@ from .partner_application import router as partner_application_router
 from .polls import router as polls_router
 from .promo import router as promo_router
 from .promocode import router as promocode_router
+from .proxy_sales import router as proxy_sales_router
 from .referral import router as referral_router
 from .subscription import router as subscription_router
 from .ticket_notifications import (
@@ -82,6 +83,7 @@ router.include_router(withdrawal_router)
 router.include_router(ticket_notifications_router)
 router.include_router(tickets_router)
 router.include_router(promocode_router)
+router.include_router(proxy_sales_router)
 router.include_router(contests_router)
 router.include_router(polls_router)
 router.include_router(promo_router)

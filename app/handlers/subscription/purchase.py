@@ -1429,6 +1429,11 @@ async def return_to_saved_cart(callback: types.CallbackQuery, state: FSMContext,
 
         await return_to_saved_tariff_cart(callback, state, db_user, db, cart_data)
         return
+    if cart_mode == 'proxy_purchase' and cart_data.get('product_id'):
+        from app.handlers.proxy_sales import return_to_saved_proxy_cart
+
+        await return_to_saved_proxy_cart(callback, state, db_user, db, cart_data)
+        return
 
     preserved_metadata_keys = {
         'saved_cart',

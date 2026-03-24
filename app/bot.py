@@ -12,6 +12,7 @@ from app.handlers import (
     menu,
     polls as user_polls,
     promocode,
+    proxy_sales,
     referral,
     server_status,
     simple_subscription,
@@ -38,6 +39,7 @@ from app.handlers.admin import (
     polls as admin_polls,
     pricing as admin_pricing,
     privacy_policy as admin_privacy_policy,
+    proxy_sales as admin_proxy_sales,
     promo_groups as admin_promo_groups,
     promo_offers as admin_promo_offers,
     promocodes as admin_promocodes,
@@ -167,6 +169,7 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     start.register_handlers(dp)
     menu.register_handlers(dp)
     subscription.register_handlers(dp)
+    proxy_sales.register_handlers(dp)
     balance.register_balance_handlers(dp)
     promocode.register_handlers(dp)
     referral.register_handlers(dp)
@@ -200,6 +203,7 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     admin_reports.register_handlers(dp)
     admin_bot_configuration.register_handlers(dp)
     admin_pricing.register_handlers(dp)
+    admin_proxy_sales.register_handlers(dp)
     admin_privacy_policy.register_handlers(dp)
     admin_public_offer.register_handlers(dp)
     admin_faq.register_handlers(dp)

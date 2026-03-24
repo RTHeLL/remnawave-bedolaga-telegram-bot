@@ -33,3 +33,4 @@ class MenuContext:
     registration_days: int = 0
     promo_group_id: str | None = None
     has_autopay: bool = False
+    proxy_sales_enabled: bool = True

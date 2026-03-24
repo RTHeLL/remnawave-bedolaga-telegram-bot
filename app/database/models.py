@@ -132,10 +132,55 @@ class TransactionType(Enum):
     DEPOSIT = 'deposit'
     WITHDRAWAL = 'withdrawal'
     SUBSCRIPTION_PAYMENT = 'subscription_payment'
+    PROXY_PURCHASE = 'proxy_purchase'
     REFUND = 'refund'
     REFERRAL_REWARD = 'referral_reward'
     POLL_REWARD = 'poll_reward'
     GIFT_PAYMENT = 'gift_payment'
+
+
+class ProxyMarkupType(StrEnum):
+    FIXED = 'fixed'
+    PERCENT = 'percent'
+
+
+class ProxyProductSourceMode(StrEnum):
+    STOCK_FIRST = 'stock_first'
+    STOCK_ONLY = 'stock_only'
+    AUTOBUY_ONLY = 'autobuy_only'
+
+
+class ProxyProviderPurchaseType(StrEnum):
+    STOCK = 'stock'
+    ORDER = 'order'
+    REPLACEMENT = 'replacement'
+
+
+class ProxyProviderPurchaseStatus(StrEnum):
+    PENDING = 'pending'
+    COMPLETED = 'completed'
+    PARTIAL = 'partial'
+    FAILED = 'failed'
+
+
+class ProxyStockStatus(StrEnum):
+    IN_STOCK = 'in_stock'
+    RESERVED = 'reserved'
+    SOLD = 'sold'
+    REPLACED = 'replaced'
+    FAILED = 'failed'
+    ARCHIVED = 'archived'
+
+
+class ProxyOrderStatus(StrEnum):
+    PENDING = 'pending'
+    PAID = 'paid'
+    FULFILLED = 'fulfilled'
+    PARTIAL = 'partial'
+    FAILED = 'failed'
+    CANCELLED = 'cancelled'
+    REPLACEMENT_PENDING = 'replacement_pending'
+    REPLACED = 'replaced'
 
 
 class PromoCodeType(Enum):
@@ -1602,6 +1647,194 @@ class Transaction(Base):
     @property
     def amount_rubles(self) -> float:
         return self.amount_kopeks / 100
+
+
+class ProxyProduct(Base):
+    __tablename__ = 'proxy_products'
+    __table_args__ = (
+        Index('ix_proxy_products_active_order', 'is_active', 'display_order'),
+        Index('ix_proxy_products_category_active', 'provider_category_id', 'is_active'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    display_order = Column(Integer, nullable=False, default=0)
+    is_active = Column(Boolean, nullable=False, default=True)
+    provider_name = Column(String(50), nullable=False, default='proxysoxy')
+    provider_category_id = Column(String(255), nullable=False, index=True)
+    provider_category_name = Column(String(255), nullable=True)
+    source_mode = Column(String(32), nullable=False, default=ProxyProductSourceMode.STOCK_FIRST.value)
+    markup_type = Column(String(32), nullable=False, default=ProxyMarkupType.FIXED.value)
+    markup_value = Column(Integer, nullable=False, default=0)
+    min_quantity = Column(Integer, nullable=False, default=1)
+    max_quantity = Column(Integer, nullable=False, default=1)
+    is_visible_in_catalog = Column(Boolean, nullable=False, default=True)
+    metadata_json = Column(JSON, nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+
+    stock_items = relationship('ProxyStockItem', back_populates='product')
+    orders = relationship('ProxyOrder', back_populates='product')
+    provider_purchases = relationship('ProxyProviderPurchase', back_populates='product')
+
+    def get_quantity_bounds(self) -> tuple[int, int]:
+        minimum = max(1, int(self.min_quantity or 1))
+        maximum = max(minimum, int(self.max_quantity or minimum))
+        return minimum, maximum
+
+    def is_quantity_allowed(self, quantity: int) -> bool:
+        minimum, maximum = self.get_quantity_bounds()
+        return minimum <= quantity <= maximum
+
+    def calculate_sale_price_kopeks(self, supplier_unit_cost_kopeks: int) -> int:
+        cost = max(0, int(supplier_unit_cost_kopeks))
+        markup = max(0, int(self.markup_value or 0))
+        if self.markup_type == ProxyMarkupType.PERCENT.value:
+            return cost + (cost * markup // 100)
+        return cost + markup
+
+
+class ProxyProviderPurchase(Base):
+    __tablename__ = 'proxy_provider_purchases'
+    __table_args__ = (
+        Index('ix_proxy_provider_purchases_status_created', 'status', 'created_at'),
+        Index('ix_proxy_provider_purchases_type_created', 'purchase_type', 'created_at'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey('proxy_products.id', ondelete='SET NULL'), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    purchase_type = Column(String(32), nullable=False)
+    status = Column(String(32), nullable=False, default=ProxyProviderPurchaseStatus.PENDING.value)
+    provider_name = Column(String(50), nullable=False, default='proxysoxy')
+    provider_order_id = Column(String(255), nullable=True, index=True)
+    requested_quantity = Column(Integer, nullable=False, default=1)
+    fulfilled_quantity = Column(Integer, nullable=False, default=0)
+    unit_cost_kopeks = Column(Integer, nullable=False, default=0)
+    total_cost_kopeks = Column(Integer, nullable=False, default=0)
+    currency = Column(String(16), nullable=False, default='RUB')
+    request_payload = Column(JSON, nullable=True)
+    response_payload = Column(JSON, nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+    completed_at = Column(AwareDateTime(), nullable=True)
+
+    product = relationship('ProxyProduct', back_populates='provider_purchases')
+    user = relationship('User', backref='proxy_provider_purchases')
+    stock_items = relationship('ProxyStockItem', back_populates='provider_purchase')
+
+
+class ProxyOrder(Base):
+    __tablename__ = 'proxy_orders'
+    __table_args__ = (
+        Index('ix_proxy_orders_user_created', 'user_id', 'created_at'),
+        Index('ix_proxy_orders_status_created', 'status', 'created_at'),
+        Index('ix_proxy_orders_product_created', 'product_id', 'created_at'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey('proxy_products.id', ondelete='SET NULL'), nullable=True, index=True)
+    transaction_id = Column(Integer, ForeignKey('transactions.id', ondelete='SET NULL'), nullable=True, index=True)
+    provider_purchase_id = Column(
+        Integer, ForeignKey('proxy_provider_purchases.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    status = Column(String(32), nullable=False, default=ProxyOrderStatus.PENDING.value)
+    quantity = Column(Integer, nullable=False, default=1)
+    unit_price_kopeks = Column(Integer, nullable=False, default=0)
+    total_price_kopeks = Column(Integer, nullable=False, default=0)
+    total_cost_kopeks = Column(Integer, nullable=False, default=0)
+    currency = Column(String(16), nullable=False, default='RUB')
+    source_mode = Column(String(32), nullable=False, default=ProxyProductSourceMode.STOCK_FIRST.value)
+    delivered_quantity = Column(Integer, nullable=False, default=0)
+    error_message = Column(Text, nullable=True)
+    delivery_payload = Column(JSON, nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+    paid_at = Column(AwareDateTime(), nullable=True)
+    fulfilled_at = Column(AwareDateTime(), nullable=True)
+
+    user = relationship('User', backref='proxy_orders')
+    product = relationship('ProxyProduct', back_populates='orders')
+    transaction = relationship('Transaction', backref='proxy_orders')
+    provider_purchase = relationship('ProxyProviderPurchase', backref='proxy_orders')
+    items = relationship('ProxyOrderItem', back_populates='order')
+
+
+class ProxyStockItem(Base):
+    __tablename__ = 'proxy_stock_items'
+    __table_args__ = (
+        Index('ix_proxy_stock_items_status_product', 'status', 'product_id'),
+        Index('ix_proxy_stock_items_reserved_order', 'reserved_for_order_id'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey('proxy_products.id', ondelete='CASCADE'), nullable=False, index=True)
+    provider_purchase_id = Column(
+        Integer, ForeignKey('proxy_provider_purchases.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    status = Column(String(32), nullable=False, default=ProxyStockStatus.IN_STOCK.value)
+    provider_item_id = Column(String(255), nullable=True, index=True)
+    provider_order_id = Column(String(255), nullable=True, index=True)
+    reserved_for_order_id = Column(Integer, ForeignKey('proxy_orders.id', ondelete='SET NULL'), nullable=True)
+    unit_cost_kopeks = Column(Integer, nullable=False, default=0)
+    currency = Column(String(16), nullable=False, default='RUB')
+    endpoint = Column(String(255), nullable=True)
+    host = Column(String(255), nullable=True)
+    port = Column(Integer, nullable=True)
+    username = Column(String(255), nullable=True)
+    password = Column(String(255), nullable=True)
+    protocol = Column(String(32), nullable=True)
+    country = Column(String(64), nullable=True)
+    expires_at = Column(AwareDateTime(), nullable=True)
+    raw_payload = Column(JSON, nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+    sold_at = Column(AwareDateTime(), nullable=True)
+
+    product = relationship('ProxyProduct', back_populates='stock_items')
+    provider_purchase = relationship('ProxyProviderPurchase', back_populates='stock_items')
+    reserved_for_order = relationship('ProxyOrder', foreign_keys=[reserved_for_order_id])
+    order_items = relationship('ProxyOrderItem', back_populates='stock_item')
+
+    def get_delivery_line(self) -> str:
+        if self.endpoint:
+            return self.endpoint
+        credentials = ''
+        if self.username:
+            credentials = self.username
+            if self.password:
+                credentials += f':{self.password}'
+            credentials += '@'
+        if self.host and self.port:
+            prefix = f'{self.protocol}://' if self.protocol else ''
+            return f'{prefix}{credentials}{self.host}:{self.port}'
+        return 'Прокси подготовлен'
+
+
+class ProxyOrderItem(Base):
+    __tablename__ = 'proxy_order_items'
+    __table_args__ = (
+        UniqueConstraint('order_id', 'stock_item_id', name='uq_proxy_order_items_order_stock'),
+        Index('ix_proxy_order_items_order', 'order_id'),
+        Index('ix_proxy_order_items_stock', 'stock_item_id'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey('proxy_orders.id', ondelete='CASCADE'), nullable=False)
+    stock_item_id = Column(Integer, ForeignKey('proxy_stock_items.id', ondelete='CASCADE'), nullable=False)
+    unit_price_kopeks = Column(Integer, nullable=False, default=0)
+    unit_cost_kopeks = Column(Integer, nullable=False, default=0)
+    is_replacement = Column(Boolean, nullable=False, default=False)
+    replaced_order_item_id = Column(Integer, ForeignKey('proxy_order_items.id', ondelete='SET NULL'), nullable=True)
+    delivered_at = Column(AwareDateTime(), nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+
+    order = relationship('ProxyOrder', back_populates='items')
+    stock_item = relationship('ProxyStockItem', back_populates='order_items')
+    replaced_order_item = relationship('ProxyOrderItem', remote_side=[id])
 
 
 class SubscriptionConversion(Base):

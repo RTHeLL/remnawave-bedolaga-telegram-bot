@@ -2677,6 +2677,43 @@ async def auto_purchase_saved_cart_after_topup(
     if cart_mode == 'add_traffic':
         return await _auto_add_traffic(db, user, cart_data, bot=bot)
 
+    if cart_mode == 'proxy_purchase':
+        try:
+            from app.database.crud.proxy_sales import get_proxy_product_by_id
+            from app.services.proxy_sales_service import (
+                ProxyInsufficientBalanceError,
+                ProxySalesError,
+                proxy_sales_service,
+            )
+
+            product_id = int(cart_data.get('product_id') or 0)
+            quantity = int(cart_data.get('quantity') or 0)
+            product = await get_proxy_product_by_id(db, product_id)
+            if product is None or not product.is_active:
+                await user_cart_service.delete_user_cart(user.id)
+                return False
+            try:
+                await proxy_sales_service.purchase_product(db, user=user, product=product, quantity=quantity, bot=bot)
+            except ProxyInsufficientBalanceError:
+                return False
+            except ProxySalesError as error:
+                logger.error(
+                    '❌ Автопокупка прокси завершилась ошибкой',
+                    format_user_id=_format_user_id(user),
+                    error=error,
+                )
+                return False
+            await user_cart_service.delete_user_cart(user.id)
+            return True
+        except Exception as error:
+            logger.error(
+                '❌ Автопокупка прокси завершилась непредвиденной ошибкой',
+                format_user_id=_format_user_id(user),
+                error=error,
+                exc_info=True,
+            )
+            return False
+
     try:
         prepared = await _prepare_auto_purchase(db, user, cart_data)
     except PurchaseValidationError as error:

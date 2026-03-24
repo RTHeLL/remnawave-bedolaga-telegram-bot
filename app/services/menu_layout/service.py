@@ -784,6 +784,11 @@ class MenuLayoutService:
             if not settings.SIMPLE_SUBSCRIPTION_ENABLED:
                 return False
 
+        # proxy_sales_enabled
+        if conditions.get('proxy_sales_enabled') is True:
+            if not context.proxy_sales_enabled:
+                return False
+
         # show_trial
         if conditions.get('show_trial') is True:
             if context.has_had_paid_subscription or context.has_active_subscription:

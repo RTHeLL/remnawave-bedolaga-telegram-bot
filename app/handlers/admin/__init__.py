@@ -17,6 +17,7 @@ from . import (
     polls,
     pricing,
     privacy_policy,
+    proxy_sales,
     promo_groups,
     promo_offers,
     promocodes,

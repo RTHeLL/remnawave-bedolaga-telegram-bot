@@ -47,13 +47,18 @@ async def create_transaction(
     # Keep original for downstream consumers (events, contests)
     stored_amount = (
         -amount_kopeks
-        if type in (TransactionType.SUBSCRIPTION_PAYMENT, TransactionType.GIFT_PAYMENT) and amount_kopeks > 0
+        if type in (TransactionType.SUBSCRIPTION_PAYMENT, TransactionType.GIFT_PAYMENT, TransactionType.PROXY_PURCHASE)
+        and amount_kopeks > 0
         else amount_kopeks
     )
 
     # Default payment_method to BALANCE for subscription/gift payments from bot (not landing)
     # to avoid double-counting with DEPOSIT in revenue calculations
-    if payment_method is None and type in (TransactionType.SUBSCRIPTION_PAYMENT, TransactionType.GIFT_PAYMENT):
+    if payment_method is None and type in (
+        TransactionType.SUBSCRIPTION_PAYMENT,
+        TransactionType.GIFT_PAYMENT,
+        TransactionType.PROXY_PURCHASE,
+    ):
         payment_method = PaymentMethod.BALANCE
 
     transaction = Transaction(
@@ -235,7 +240,9 @@ async def get_user_total_spent_kopeks(db: AsyncSession, user_id: int) -> int:
             and_(
                 Transaction.user_id == user_id,
                 Transaction.is_completed.is_(True),
-                Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+                Transaction.type.in_(
+                    [TransactionType.SUBSCRIPTION_PAYMENT.value, TransactionType.PROXY_PURCHASE.value]
+                ),
             )
         )
     )

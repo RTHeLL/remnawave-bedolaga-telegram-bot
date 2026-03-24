@@ -6,6 +6,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import PERIOD_PRICES, settings
+from app.database.crud.system_setting import get_setting_value
 from app.database.models import User
 from app.localization.loader import DEFAULT_LANGUAGE
 from app.localization.texts import get_texts
@@ -46,6 +47,13 @@ async def get_main_menu_keyboard_async(
     Если MENU_LAYOUT_ENABLED=True, использует конфигурацию из БД.
     Иначе делегирует в синхронную версию.
     """
+    proxy_sales_enabled_raw = await get_setting_value(db, 'PROXY_SALES_ENABLED')
+    proxy_sales_enabled = (
+        True
+        if proxy_sales_enabled_raw is None
+        else str(proxy_sales_enabled_raw).strip().lower() in {'1', 'true', 'yes', 'on'}
+    )
+
     if settings.MENU_LAYOUT_ENABLED:
         from app.services.menu_layout_service import MenuContext, MenuLayoutService
 
@@ -134,6 +142,7 @@ async def get_main_menu_keyboard_async(
             registration_days=registration_days,
             promo_group_id=promo_group_id,
             has_autopay=has_autopay,
+            proxy_sales_enabled=proxy_sales_enabled,
         )
 
         return await MenuLayoutService.build_keyboard(db, context)
@@ -151,6 +160,7 @@ async def get_main_menu_keyboard_async(
         has_saved_cart=has_saved_cart,
         is_moderator=is_moderator,
         custom_buttons=custom_buttons,
+        proxy_sales_enabled=proxy_sales_enabled,
     )
 
 
@@ -554,6 +564,7 @@ def get_main_menu_keyboard(
     *,
     is_moderator: bool = False,
     custom_buttons: list[InlineKeyboardButton] | None = None,
+    proxy_sales_enabled: bool = True,
 ) -> InlineKeyboardMarkup:
     texts = get_texts(language)
 
@@ -696,6 +707,14 @@ def get_main_menu_keyboard(
         paired_buttons.extend(subscription_buttons)
     if simple_purchase_button:
         paired_buttons.append(simple_purchase_button)
+
+    if proxy_sales_enabled:
+        paired_buttons.append(
+            InlineKeyboardButton(
+                text=texts.t('MENU_PROXY_PRODUCTS', '🧩 Прокси'),
+                callback_data='menu_proxy_products',
+            )
+        )
 
     if show_resume_checkout or has_saved_cart:
         resume_callback = 'return_to_saved_cart' if has_saved_cart else 'subscription_resume_checkout'

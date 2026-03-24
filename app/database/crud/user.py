@@ -53,7 +53,9 @@ def _build_spending_stats_select():
             func.sum(
                 case(
                     (
-                        Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+                        Transaction.type.in_(
+                            [TransactionType.SUBSCRIPTION_PAYMENT.value, TransactionType.PROXY_PURCHASE.value]
+                        ),
                         func.abs(Transaction.amount_kopeks),
                     ),
                     else_=0,
@@ -65,7 +67,9 @@ def _build_spending_stats_select():
             func.sum(
                 case(
                     (
-                        Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+                        Transaction.type.in_(
+                            [TransactionType.SUBSCRIPTION_PAYMENT.value, TransactionType.PROXY_PURCHASE.value]
+                        ),
                         1,
                     ),
                     else_=0,

@@ -37,6 +37,12 @@ def get_admin_main_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_MAIN_PROXY_SALES', '🧩 Прокси'),
+                    callback_data='admin_proxy_sales',
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_MAIN_PROMO_STATS', '💰 Промокоды/Статистика'),
                     callback_data='admin_submenu_promo',
                 ),

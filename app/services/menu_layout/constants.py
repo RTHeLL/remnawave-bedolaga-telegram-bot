@@ -47,6 +47,12 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
             'max_per_row': 1,
         },
         {
+            'id': 'proxy_products_row',
+            'buttons': ['proxy_products'],
+            'conditions': {'proxy_sales_enabled': True},
+            'max_per_row': 1,
+        },
+        {
             'id': 'resume_row',
             'buttons': ['resume_checkout'],
             'conditions': {'has_saved_cart': True},
@@ -170,6 +176,16 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
             'enabled': True,
             'visibility': 'all',
             'conditions': None,
+            'dynamic_text': False,
+        },
+        'proxy_products': {
+            'type': 'builtin',
+            'builtin_id': 'proxy_products',
+            'text': {'ru': '🧩 Прокси', 'en': '🧩 Proxies'},
+            'action': 'menu_proxy_products',
+            'enabled': True,
+            'visibility': 'all',
+            'conditions': {'proxy_sales_enabled': True},
             'dynamic_text': False,
         },
         'resume_checkout': {
@@ -326,6 +342,13 @@ BUILTIN_BUTTONS_INFO: list[dict[str, Any]] = [
         'supports_dynamic_text': False,
     },
     {
+        'id': 'proxy_products',
+        'default_text': {'ru': '🧩 Прокси', 'en': '🧩 Proxies'},
+        'callback_data': 'menu_proxy_products',
+        'default_conditions': {'proxy_sales_enabled': True},
+        'supports_dynamic_text': False,
+    },
+    {
         'id': 'resume_checkout',
         'default_text': {'ru': '↩️ Вернуться к оформлению', 'en': '↩️ Resume checkout'},
         'callback_data': 'return_to_saved_cart',
@@ -400,6 +423,13 @@ AVAILABLE_CALLBACKS: list[dict[str, Any]] = [
         'category': 'menu',
         'icon': '⬅️',
         'text': {'ru': '⬅️ Назад', 'en': '⬅️ Back'},
+    },
+    {
+        'callback_data': 'menu_proxy_products',
+        'name': 'Каталог прокси',
+        'category': 'menu',
+        'icon': '🧩',
+        'text': {'ru': '🧩 Прокси', 'en': '🧩 Proxies'},
     },
     {
         'callback_data': 'menu_faq',

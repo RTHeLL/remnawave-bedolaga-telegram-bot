@@ -407,6 +407,11 @@ class Settings(BaseSettings):
     NALOGO_STORAGE_PATH: str = './nalogo_tokens.json'
     NALOGO_PROXY_URL: str | None = None  # SOCKS proxy for nalog.ru; falls back to PROXY_URL if not set
 
+    PROXYSOXY_ENABLED: bool = False
+    PROXYSOXY_API_KEY: str | None = None
+    PROXYSOXY_TIMEOUT: float = 30.0
+    PROXYSOXY_LOW_BALANCE_THRESHOLD_KOPEKS: int = 0
+
     AUTO_PURCHASE_AFTER_TOPUP_ENABLED: bool = False
 
     # Отключение превью ссылок в сообщениях бота
@@ -1780,6 +1785,18 @@ class Settings(BaseSettings):
 
     def is_nalogo_enabled(self) -> bool:
         return self.NALOGO_ENABLED and self.NALOGO_INN is not None and self.NALOGO_PASSWORD is not None
+
+    def is_proxysoxy_enabled(self) -> bool:
+        return bool(self.PROXYSOXY_ENABLED)
+
+    def is_proxysoxy_configured(self) -> bool:
+        return self.is_proxysoxy_enabled() and bool(self.PROXYSOXY_API_KEY)
+
+    def get_proxysoxy_low_balance_threshold_kopeks(self) -> int:
+        try:
+            return max(0, int(self.PROXYSOXY_LOW_BALANCE_THRESHOLD_KOPEKS))
+        except (TypeError, ValueError):
+            return 0
 
     def is_support_topup_enabled(self) -> bool:
         return bool(self.SUPPORT_TOPUP_ENABLED)

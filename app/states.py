@@ -21,6 +21,7 @@ class SubscriptionStates(StatesGroup):
     extending_subscription = State()
     confirming_traffic_reset = State()
     cart_saved_for_topup = State()
+    selecting_proxy_quantity = State()
 
     # Состояния для простой подписки
     waiting_for_simple_subscription_payment_method = State()
@@ -207,6 +208,18 @@ class AdminStates(StatesGroup):
     editing_tariff_traffic_topup_packages = State()
     editing_tariff_max_topup_traffic = State()
     editing_tariff_daily_price = State()
+
+    creating_proxy_product_name = State()
+    creating_proxy_product_description = State()
+    creating_proxy_product_category = State()
+    creating_proxy_product_markup_value = State()
+    creating_proxy_product_quantities = State()
+    editing_proxy_product_name = State()
+    editing_proxy_product_description = State()
+    editing_proxy_product_category = State()
+    editing_proxy_product_markup_value = State()
+    editing_proxy_product_quantities = State()
+    proxy_stock_purchase_quantity = State()
 
 
 class SupportStates(StatesGroup):
