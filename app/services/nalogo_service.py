@@ -1,3 +1,4 @@
+import traceback
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -360,6 +361,7 @@ class NaloGoService:
                     payment_id=payment_id,
                     amount=amount,
                 )
+                traceback.print_exc()
                 if queue_on_failure:
                     await self._queue_receipt(
                         name, amount, quantity, client_info, payment_id, telegram_user_id, amount_kopeks
