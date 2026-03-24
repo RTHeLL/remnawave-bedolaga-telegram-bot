@@ -10,11 +10,13 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import structlog
 
 from ._http import AuthProvider
 from .dto.device import DeviceInfo
 from .exceptions import raise_for_status
 
+logger = structlog.get_logger(__name__)
 
 def generate_device_id() -> str:
     """Generate device ID similar to PHP's DeviceIdGenerator."""
@@ -140,7 +142,7 @@ class AuthProviderImpl(AuthProvider):
                 timeout=10.0,
             )
 
-            print(f"[NaloGO AuthProviderImpl] create_new_access_token status: code: {response.status_code}, text: {response.text}")
+            logger.info(f"[NaloGO AuthProviderImpl] create_new_access_token status: code: {response.status_code}, text: {response.text}")
             raise_for_status(response)
 
             # Store and return token
