@@ -27,6 +27,7 @@ from app.database.crud.subscription import (
     decrement_subscription_server_counts,
     expire_subscription,
     get_subscription_by_user_id,
+    is_recently_updated_by_webhook,
     reactivate_subscription,
     update_subscription_usage,
 )
@@ -59,6 +60,7 @@ _TEXT_KEY_TO_NOTIFICATION_TYPE: dict[str, NotificationType] = {
     'WEBHOOK_USER_NOT_CONNECTED': NotificationType.WEBHOOK_USER_NOT_CONNECTED,
     'WEBHOOK_DEVICE_ADDED': NotificationType.WEBHOOK_DEVICE_ADDED,
     'WEBHOOK_DEVICE_DELETED': NotificationType.WEBHOOK_DEVICE_DELETED,
+    'WEBHOOK_TORRENT_DETECTED': NotificationType.WEBHOOK_TORRENT_DETECTED,
 }
 
 # Mapping from locale text_key to the Settings toggle that controls it
@@ -79,6 +81,7 @@ _TEXT_KEY_TO_SETTING: dict[str, str] = {
     'WEBHOOK_USER_NOT_CONNECTED': 'WEBHOOK_NOTIFY_NOT_CONNECTED',
     'WEBHOOK_DEVICE_ADDED': 'WEBHOOK_NOTIFY_DEVICES',
     'WEBHOOK_DEVICE_DELETED': 'WEBHOOK_NOTIFY_DEVICES',
+    'WEBHOOK_TORRENT_DETECTED': 'WEBHOOK_NOTIFY_TORRENT_DETECTED',
 }
 
 # Admin event display names for notification messages
@@ -124,11 +127,14 @@ _ADMIN_NODE_CONNECTION_EVENTS = frozenset({'node.connection_lost', 'node.connect
 class RemnaWaveWebhookService:
     """Processes incoming webhooks from RemnaWave backend."""
 
-    # In-memory guard: tracks recent panel recreations per subscription_id.
-    # Prevents unbounded user.deleted → recreate → user.deleted loops.
-    # Key: subscription_id, Value: datetime of last recreation attempt.
+    # NOTE: In-memory guards. Only correct with a single-worker deployment.
+    # For multi-worker setups, move to Redis or another shared store.
     _recent_recreations: dict[int, datetime] = {}
     _RECREATION_GUARD_SECONDS: int = 120  # 2-minute cooldown
+    _intentional_panel_deletions_by_uuid: dict[str, datetime] = {}
+    _intentional_panel_deletions_by_telegram_id: dict[int, datetime] = {}
+    _INTENTIONAL_PANEL_DELETION_GUARD_SECONDS: int = 300
+    _MAX_INTENTIONAL_ENTRIES: int = 10_000
 
     def __init__(self, bot: Bot) -> None:
         self.bot = bot
@@ -154,6 +160,7 @@ class RemnaWaveWebhookService:
             'user.not_connected': self._handle_user_not_connected,
             'user_hwid_devices.added': self._handle_device_added,
             'user_hwid_devices.deleted': self._handle_device_deleted,
+            'torrent_blocker.report': self._handle_torrent_detected,
         }
 
         # Admin-scoped handlers: no user resolution, notify admin chat
@@ -169,18 +176,111 @@ class RemnaWaveWebhookService:
         """Check if the event is admin-scoped (no DB session needed)."""
         return event_name in self._admin_handlers
 
+    def needs_db_session(self, event_name: str) -> bool:
+        """Check if the event requires a DB session (user handler or dual event)."""
+        return event_name in self._user_handlers
+
+    @classmethod
+    def _prune_intentional_panel_deletions(cls) -> None:
+        if not cls._intentional_panel_deletions_by_uuid and not cls._intentional_panel_deletions_by_telegram_id:
+            return
+
+        now = datetime.now(UTC)
+        uuid_keys = [
+            key
+            for key, created_at in cls._intentional_panel_deletions_by_uuid.items()
+            if (now - created_at).total_seconds() >= cls._INTENTIONAL_PANEL_DELETION_GUARD_SECONDS
+        ]
+        for key in uuid_keys:
+            del cls._intentional_panel_deletions_by_uuid[key]
+
+        telegram_keys = [
+            key
+            for key, created_at in cls._intentional_panel_deletions_by_telegram_id.items()
+            if (now - created_at).total_seconds() >= cls._INTENTIONAL_PANEL_DELETION_GUARD_SECONDS
+        ]
+        for key in telegram_keys:
+            del cls._intentional_panel_deletions_by_telegram_id[key]
+
+    @classmethod
+    def mark_intentional_panel_deletion(
+        cls,
+        *,
+        panel_uuids: list[str] | None = None,
+        telegram_id: int | None = None,
+    ) -> None:
+        cls._prune_intentional_panel_deletions()
+
+        total = len(cls._intentional_panel_deletions_by_uuid) + len(cls._intentional_panel_deletions_by_telegram_id)
+        if total >= cls._MAX_INTENTIONAL_ENTRIES:
+            logger.warning('Intentional deletion guard at capacity, skipping', total=total)
+            return
+
+        now = datetime.now(UTC)
+
+        for panel_uuid in panel_uuids or []:
+            normalized = (panel_uuid or '').strip()
+            if normalized:
+                cls._intentional_panel_deletions_by_uuid[normalized] = now
+
+        if telegram_id is not None:
+            cls._intentional_panel_deletions_by_telegram_id[int(telegram_id)] = now
+
+    @classmethod
+    def _is_intentional_panel_deletion_event(cls, data: dict[str, Any]) -> bool:
+        cls._prune_intentional_panel_deletions()
+
+        candidate_uuids: list[str] = []
+        candidate_telegram_ids: list[int] = []
+
+        for value in (data.get('uuid'), data.get('userUuid')):
+            if value:
+                candidate_uuids.append(str(value).strip())
+
+        telegram_id = data.get('telegramId')
+        if telegram_id:
+            try:
+                candidate_telegram_ids.append(int(telegram_id))
+            except (TypeError, ValueError):
+                pass
+
+        nested_user = data.get('user')
+        if isinstance(nested_user, dict):
+            nested_uuid = nested_user.get('uuid')
+            if nested_uuid:
+                candidate_uuids.append(str(nested_uuid).strip())
+
+            nested_tid = nested_user.get('telegramId')
+            if nested_tid:
+                try:
+                    candidate_telegram_ids.append(int(nested_tid))
+                except (TypeError, ValueError):
+                    pass
+
+        return any(uid in cls._intentional_panel_deletions_by_uuid for uid in candidate_uuids) or any(
+            tid in cls._intentional_panel_deletions_by_telegram_id for tid in candidate_telegram_ids
+        )
+
     async def process_event(self, db: AsyncSession | None, event_name: str, data: dict) -> bool:
         """Route event to the appropriate handler.
 
         Returns True if the event was processed, False if skipped/unknown.
         db may be None for admin events that don't require database access.
         """
+        # Check if event has both admin and user handlers (e.g. torrent_blocker.report)
+        user_handler = self._user_handlers.get(event_name)
+        if event_name in self._admin_handlers and user_handler:
+            # Dual event: send admin notification AND process user handler
+            await self._process_admin_event(event_name, data)
+            if db is not None:
+                await self._process_user_event(db, event_name, data, user_handler)
+            return True
+
         # Check admin-scoped handlers (no DB needed)
         if event_name in self._admin_handlers:
             return await self._process_admin_event(event_name, data)
 
         # Check user-scoped handlers (require DB session)
-        user_handler = self._user_handlers.get(event_name)
         if user_handler:
             if db is None:
                 logger.error('RemnaWave webhook: DB session required for user event', event_name=event_name)
@@ -706,6 +806,18 @@ class RemnaWaveWebhookService:
             await db.commit()
             return
 
+        # Защита от echo-webhook: если подписка была недавно реактивирована
+        # (канал-реподписка ставит last_webhook_update_at), пропускаем
+        if subscription.status == SubscriptionStatus.ACTIVE.value and is_recently_updated_by_webhook(subscription):
+            logger.info(
+                'Webhook user.disabled: подписка недавно реактивирована, пропуск echo-webhook',
+                subscription_id=subscription.id,
+                user_id=user.id,
+            )
+            self._stamp_webhook_update(subscription)
+            await db.commit()
+            return
+
         self._stamp_webhook_update(subscription)
         if subscription.status != SubscriptionStatus.DISABLED.value:
             await deactivate_subscription(db, subscription)
@@ -948,59 +1060,32 @@ class RemnaWaveWebhookService:
                     logger.error('Webhook: user not found after rollback', user_id=user_id)
                     return
 
-        # Check if subscription has a future end_date — likely a spurious user.deleted
-        # (e.g., RemnaWave sends user.deleted during panel resync when modifying another user)
-        subscription_still_valid = (
-            subscription is not None and subscription.end_date is not None and subscription.end_date > datetime.now(UTC)
-        )
+        # user.deleted = user removed from panel. Deactivate everything.
+        # No recreation attempts — if it was a mistake, admin can re-sync.
 
         if subscription:
-            if subscription_still_valid:
-                # Subscription is still valid — don't mark as expired.
-                # Clear only panel linkage fields (URLs, UUID) but keep status and squads
-                # so that re-creation can restore VPN access.
-                logger.warning(
-                    'Webhook user.deleted: subscription has future end_date, '
-                    'keeping active status and attempting panel re-creation',
+            if subscription.status != SubscriptionStatus.EXPIRED.value:
+                subscription.status = SubscriptionStatus.EXPIRED.value
+                logger.info(
+                    'Webhook user.deleted: subscription expired',
                     sub_id=sub_id,
                     user_id=user_id,
-                    end_date=subscription.end_date,
-                    status=subscription.status,
                 )
-                subscription.subscription_url = None
-                subscription.subscription_crypto_link = None
-                subscription.remnawave_short_uuid = None
-                # Keep connected_squads — needed for panel re-creation
-                subscription.updated_at = datetime.now(UTC)
-            else:
-                # Subscription expired or has no end_date — safe to mark as expired
-                if subscription.status != SubscriptionStatus.EXPIRED.value:
-                    subscription.status = SubscriptionStatus.EXPIRED.value
-                    logger.info(
-                        'Webhook: subscription marked expired (user deleted in panel) for user',
-                        sub_id=sub_id,
-                        user_id=user_id,
-                    )
-                subscription.subscription_url = None
-                subscription.subscription_crypto_link = None
-                subscription.remnawave_short_uuid = None
-                subscription.connected_squads = []
-                subscription.updated_at = datetime.now(UTC)
+            subscription.subscription_url = None
+            subscription.subscription_crypto_link = None
+            subscription.remnawave_short_uuid = None
+            subscription.connected_squads = []
+            subscription.updated_at = datetime.now(UTC)
 
-            # In multi-tariff mode clear per-subscription UUID here
             if settings.is_multi_tariff_enabled():
                 subscription.remnawave_uuid = None
 
-            # Remove SubscriptionServer link rows (panel user no longer exists)
             await db.execute(delete(SubscriptionServer).where(SubscriptionServer.subscription_id == sub_id))
 
-        # Clear remnawave linkage — only in single-tariff mode (multi-tariff uses per-subscription UUIDs)
+        # Clear remnawave linkage
         if not settings.is_multi_tariff_enabled():
             if user.remnawave_uuid:
                 user.remnawave_uuid = None
-        # In multi-tariff mode, subscription.remnawave_uuid was cleared above.
-        # If subscription was None (fallback path), extract panel UUID from data and
-        # clear it from the matching subscription manually.
         elif subscription is None:
             panel_uuid = data.get('uuid') or data.get('userUuid')
             if panel_uuid:
@@ -1011,35 +1096,55 @@ class RemnaWaveWebhookService:
                         sub.remnawave_short_uuid = None
                         break
 
+        # Deactivate sibling subscriptions whose panel user also no longer exists.
+        # In multi-tariff each subscription has its own panel user — only expire those
+        # that are actually gone (verified via API), leave alive ones untouched.
+        await db.refresh(user, ['subscriptions'])
+        now = datetime.now(UTC)
+        from app.services.subscription_service import SubscriptionService
+
+        subscription_service = SubscriptionService()
+        for other_sub in getattr(user, 'subscriptions', None) or []:
+            if other_sub.id == sub_id:
+                continue
+            if other_sub.status in (SubscriptionStatus.EXPIRED.value, SubscriptionStatus.DISABLED.value):
+                continue
+            # Check if this sibling's panel user still exists
+            sibling_uuid = getattr(other_sub, 'remnawave_uuid', None) if settings.is_multi_tariff_enabled() else None
+            if not sibling_uuid and not settings.is_multi_tariff_enabled():
+                sibling_uuid = getattr(user, 'remnawave_uuid', None)
+            if sibling_uuid and subscription_service.is_configured:
+                try:
+                    async with subscription_service.get_api_client() as api:
+                        panel_user = await api.get_user_by_uuid(sibling_uuid)
+                    if panel_user is not None:
+                        continue  # still alive in panel, don't touch
+                except Exception:
+                    pass  # API error — deactivate to be safe
+
+            other_sub.status = SubscriptionStatus.EXPIRED.value
+            other_sub.subscription_url = None
+            other_sub.subscription_crypto_link = None
+            other_sub.remnawave_short_uuid = None
+            other_sub.connected_squads = []
+            other_sub.updated_at = now
+            if settings.is_multi_tariff_enabled():
+                other_sub.remnawave_uuid = None
+            await db.execute(delete(SubscriptionServer).where(SubscriptionServer.subscription_id == other_sub.id))
+            logger.info(
+                'Webhook user.deleted: deactivated sibling subscription (panel user gone)',
+                other_sub_id=other_sub.id,
+                user_id=user_id,
+            )
+
         await db.commit()
 
-        if subscription_still_valid:
-            # Attempt to re-create user in panel to restore VPN access.
-            # If recreation fails, fall back to expiring the subscription
-            # so it doesn't stay in ACTIVE-but-no-panel limbo.
-            recreated = await self._attempt_panel_recreation(db, user, subscription)
-            if not recreated:
-                subscription.status = SubscriptionStatus.EXPIRED.value
-                subscription.connected_squads = []
-                subscription.updated_at = datetime.now(UTC)
-                await db.commit()
-                await self._notify_user(
-                    user,
-                    'WEBHOOK_SUB_DELETED',
-                    reply_markup=self._get_renew_keyboard(
-                        user, getattr(subscription, 'id', None) if subscription else None
-                    ),
-                    subscription=subscription,
-                )
-        else:
-            await self._notify_user(
-                user,
-                'WEBHOOK_SUB_DELETED',
-                reply_markup=self._get_renew_keyboard(
-                    user, getattr(subscription, 'id', None) if subscription else None
-                ),
-                subscription=subscription,
-            )
+        await self._notify_user(
+            user,
+            'WEBHOOK_SUB_DELETED',
+            reply_markup=self._get_renew_keyboard(user, getattr(subscription, 'id', None) if subscription else None),
+            subscription=subscription,
+        )
 
     async def _attempt_panel_recreation(self, db: AsyncSession, user: User, subscription: Subscription) -> bool:
         """Re-create user in RemnaWave panel after spurious user.deleted webhook.
@@ -1298,5 +1403,16 @@ class RemnaWaveWebhookService:
             'WEBHOOK_DEVICE_DELETED',
             reply_markup=self._get_subscription_keyboard(user),
             format_kwargs={'device': device_name or '—'},
+            subscription=subscription,
+        )
+
+    async def _handle_torrent_detected(
+        self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict
+    ) -> None:
+        logger.info('Webhook: torrent detected for user', user_id=user.id)
+        await self._notify_user(
+            user,
+            'WEBHOOK_TORRENT_DETECTED',
+            reply_markup=self._get_subscription_keyboard(user),
             subscription=subscription,
         )
