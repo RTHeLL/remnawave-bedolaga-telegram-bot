@@ -15,7 +15,12 @@ from app.cabinet.auth.jwt_handler import create_auto_login_token
 from app.cabinet.auth.password_utils import hash_password
 from app.config import settings
 from app.database.crud.landing import create_guest_purchase
-from app.database.crud.subscription import create_paid_subscription, get_subscription_by_user_id, replace_subscription
+from app.database.crud.subscription import (
+    create_paid_subscription,
+    extend_subscription,
+    get_subscription_by_user_id,
+    replace_subscription,
+)
 from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import _get_or_create_default_promo_group
@@ -28,6 +33,7 @@ from app.database.models import (
     Transaction,
     TransactionType,
     User,
+    _aware,
 )
 from app.services.subscription_service import SubscriptionService
 
@@ -310,6 +316,7 @@ async def fulfill_purchase(
             recipient_value,
             purchase=purchase,
             pre_resolved_telegram_id=pre_resolved_telegram_id,
+            tariff_id=purchase.tariff_id,
         )
 
         # Load tariff early — needed for both PENDING_ACTIVATION and DELIVERED paths
@@ -340,7 +347,14 @@ async def fulfill_purchase(
             return purchase
 
         # Check if user already has a subscription
-        existing_subscription = await get_subscription_by_user_id(db, user.id)
+        if settings.is_multi_tariff_enabled():
+            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+            # In multi-tariff mode, only block if user already has THIS SPECIFIC tariff active.
+            # Different tariffs can be purchased simultaneously — that's the whole point.
+            existing_subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
+        else:
+            existing_subscription = await get_subscription_by_user_id(db, user.id)
         if existing_subscription is not None and (existing_subscription.is_active or purchase.is_gift):
             # Active subscription or gift with any existing subscription — hold for manual activation
             purchase.status = GuestPurchaseStatus.PENDING_ACTIVATION.value
@@ -348,7 +362,7 @@ async def fulfill_purchase(
             if recipient_type == 'email' and not purchase.is_gift and is_new_account:
                 purchase.auto_login_token = create_auto_login_token(user.id)
             await db.commit()
-            await db.refresh(purchase, attribute_names=['landing', 'user'])
+            await db.refresh(purchase, attribute_names=['landing', 'user', 'buyer'])
 
             try:
                 await send_guest_notification(
@@ -428,7 +442,7 @@ async def fulfill_purchase(
             purchase.auto_login_token = create_auto_login_token(user.id)
 
         await db.commit()
-        await db.refresh(purchase, attribute_names=['landing', 'user'])
+        await db.refresh(purchase, attribute_names=['landing', 'user', 'buyer'])
 
         # Create transaction so promo group auto-assignment and contest tracking work
         transaction = None
@@ -553,6 +567,7 @@ async def _find_or_create_user(
     contact_value: str,
     purchase: GuestPurchase | None = None,
     pre_resolved_telegram_id: int | None = None,
+    tariff_id: int | None = None,
 ) -> tuple[User, bool]:
     """Find user by email/telegram username or create a new one.
 
@@ -592,14 +607,21 @@ async def _find_or_create_user(
 
         # Create new email user with verified cabinet account
         plain_password = secrets.token_urlsafe(12)
-        default_group = await _get_or_create_default_promo_group(db)
+        # Resolve promo group: prefer tariff's allowed group, fallback to default
+        resolved_group = None
+        if tariff_id:
+            tariff_obj = await get_tariff_by_id(db, tariff_id)
+            if tariff_obj and tariff_obj.allowed_promo_groups:
+                resolved_group = tariff_obj.allowed_promo_groups[0]
+        if not resolved_group:
+            resolved_group = await _get_or_create_default_promo_group(db)
         user = User(
             auth_type='email',
             email=contact_value,
             email_verified=True,
             email_verified_at=datetime.now(UTC),
             password_hash=hash_password(plain_password),
-            promo_group_id=default_group.id,
+            promo_group_id=resolved_group.id,
         )
         if purchase:
             purchase.cabinet_password = plain_password
@@ -1009,7 +1031,6 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
     notification_language = user.language or 'ru'
 
     try:
-        existing_subscription = await get_subscription_by_user_id(db, user.id)
         subscription_service = SubscriptionService()
 
         squads = list(tariff.allowed_squads or [])
@@ -1019,31 +1040,98 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
             all_servers, _ = await get_all_server_squads(db, available_only=True)
             squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
-        if existing_subscription is not None:
-            subscription = await replace_subscription(
-                db,
-                existing_subscription,
-                duration_days=purchase.period_days,
-                traffic_limit_gb=tariff.traffic_limit_gb,
-                device_limit=tariff.device_limit,
-                connected_squads=squads,
-                is_trial=False,
-                update_server_counters=True,
-                commit=False,
+        # In multi-tariff mode, always create a new subscription (new Remnawave user)
+        if settings.is_multi_tariff_enabled():
+            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+            existing_for_tariff = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
+            _has_time = (
+                existing_for_tariff is not None
+                and existing_for_tariff.end_date is not None
+                and _aware(existing_for_tariff.end_date) > datetime.now(UTC)
             )
-            subscription.tariff_id = tariff.id
+            if existing_for_tariff and _has_time:
+                # Extend existing active/trial subscription instead of replacing (preserve remaining days)
+                subscription = await extend_subscription(
+                    db,
+                    existing_for_tariff,
+                    purchase.period_days,
+                    traffic_limit_gb=tariff.traffic_limit_gb,
+                    device_limit=tariff.device_limit,
+                    connected_squads=squads,
+                    commit=False,
+                )
+            elif existing_for_tariff:
+                # Expired subscription — replace with fresh dates
+                subscription = await replace_subscription(
+                    db,
+                    existing_for_tariff,
+                    duration_days=purchase.period_days,
+                    traffic_limit_gb=tariff.traffic_limit_gb,
+                    device_limit=tariff.device_limit,
+                    connected_squads=squads,
+                    is_trial=False,
+                    update_server_counters=True,
+                    commit=False,
+                )
+                subscription.tariff_id = tariff.id
+            else:
+                subscription = await create_paid_subscription(
+                    db=db,
+                    user_id=user.id,
+                    duration_days=purchase.period_days,
+                    traffic_limit_gb=tariff.traffic_limit_gb,
+                    device_limit=tariff.device_limit,
+                    connected_squads=squads,
+                    tariff_id=tariff.id,
+                    update_server_counters=True,
+                    commit=False,
+                )
         else:
-            subscription = await create_paid_subscription(
-                db=db,
-                user_id=user.id,
-                duration_days=purchase.period_days,
-                traffic_limit_gb=tariff.traffic_limit_gb,
-                device_limit=tariff.device_limit,
-                connected_squads=squads,
-                tariff_id=tariff.id,
-                update_server_counters=True,
-                commit=False,
+            existing_subscription = await get_subscription_by_user_id(db, user.id)
+            _sub_has_time = (
+                existing_subscription is not None
+                and existing_subscription.end_date is not None
+                and _aware(existing_subscription.end_date) > datetime.now(UTC)
             )
+            if existing_subscription is not None and _sub_has_time:
+                # Extend existing active subscription (preserve remaining days)
+                subscription = await extend_subscription(
+                    db,
+                    existing_subscription,
+                    purchase.period_days,
+                    tariff_id=tariff.id,
+                    traffic_limit_gb=tariff.traffic_limit_gb,
+                    device_limit=tariff.device_limit,
+                    connected_squads=squads,
+                    commit=False,
+                )
+            elif existing_subscription is not None:
+                # Expired subscription — replace with fresh dates
+                subscription = await replace_subscription(
+                    db,
+                    existing_subscription,
+                    duration_days=purchase.period_days,
+                    traffic_limit_gb=tariff.traffic_limit_gb,
+                    device_limit=tariff.device_limit,
+                    connected_squads=squads,
+                    is_trial=False,
+                    update_server_counters=True,
+                    commit=False,
+                )
+                subscription.tariff_id = tariff.id
+            else:
+                subscription = await create_paid_subscription(
+                    db=db,
+                    user_id=user.id,
+                    duration_days=purchase.period_days,
+                    traffic_limit_gb=tariff.traffic_limit_gb,
+                    device_limit=tariff.device_limit,
+                    connected_squads=squads,
+                    tariff_id=tariff.id,
+                    update_server_counters=True,
+                    commit=False,
+                )
 
         await subscription_service.create_remnawave_user(db, subscription)
         await db.refresh(subscription)
@@ -1057,7 +1145,7 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
 
         # Single atomic commit: subscription + purchase status + user changes
         await db.commit()
-        await db.refresh(purchase, attribute_names=['landing', 'user'])
+        await db.refresh(purchase, attribute_names=['landing', 'user', 'buyer'])
 
         # Create transaction so promo group auto-assignment and contest tracking work
         try:

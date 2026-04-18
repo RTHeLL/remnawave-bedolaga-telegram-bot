@@ -62,6 +62,7 @@ class BroadcastConfig:
     media: BroadcastMediaConfig | None = None
     initiator_name: str | None = None
     custom_buttons: list[dict] | None = None
+    category: str = 'system'  # system|news|promo
 
 
 @dataclass
@@ -160,7 +161,7 @@ class BroadcastService:
                 await session.commit()
 
             # _fetch_recipients теперь возвращает list[int] (telegram_id), а не ORM-объекты
-            recipient_ids: list[int] = await self._fetch_recipients(config.target)
+            recipient_ids: list[int] = await self._fetch_recipients(config.target, config.category)
 
             async with AsyncSessionLocal() as session:
                 broadcast = await session.get(BroadcastHistory, broadcast_id)
@@ -226,14 +227,30 @@ class BroadcastService:
             logger.exception('Критическая ошибка при выполнении рассылки', broadcast_id=broadcast_id, exc=exc)
             await self._mark_failed(broadcast_id, sent_count, failed_count, blocked_count)
 
-    async def _fetch_recipients(self, target: str) -> list[int]:
-        """Загружает получателей и возвращает список telegram_id (скаляры, не ORM-объекты)."""
+    async def _fetch_recipients(self, target: str, category: str = 'system') -> list[int]:
+        """Загружает получателей и возвращает список telegram_id (скаляры, не ORM-объекты).
+
+        Filters out users who disabled the given broadcast category in their
+        notification preferences (news_enabled, promo_offers_enabled).
+        Category 'system' is never filtered — system notifications reach everyone.
+        """
         async with AsyncSessionLocal() as session:
             if target.startswith('custom_'):
                 criteria = target[len('custom_') :]
                 users_orm = await get_custom_users(session, criteria)
             else:
                 users_orm = await get_target_users(session, target)
+
+            # Filter by user notification preferences based on broadcast category
+            if category == 'news':
+                from app.utils.notification_prefs import is_news_enabled
+
+                users_orm = [u for u in users_orm if is_news_enabled(u)]
+            elif category == 'promo':
+                from app.utils.notification_prefs import is_promo_offers_enabled
+
+                users_orm = [u for u in users_orm if is_promo_offers_enabled(u)]
+            # category == 'system' → no filtering, sent to everyone
 
             # Извлекаем telegram_id сразу, пока сессия жива.
             # После выхода из блока ORM-объекты станут detached.
@@ -544,9 +561,9 @@ async def cleanup_blocked_broadcast_users(blocked_telegram_ids: list[int]) -> No
                 from app.database.crud.subscription import is_active_paid_subscription
 
                 sub_result = await session.execute(select(Subscription).where(Subscription.user_id == user.id))
-                user_subscription = sub_result.scalar_one_or_none()
+                all_subs = sub_result.scalars().all()
 
-                if is_active_paid_subscription(user_subscription):
+                if any(is_active_paid_subscription(s) for s in all_subs):
                     logger.info(
                         '⏭️ Пропуск отключения подписки: у пользователя активная оплаченная подписка',
                         telegram_id=telegram_id,
@@ -574,7 +591,14 @@ async def cleanup_blocked_broadcast_users(blocked_telegram_ids: list[int]) -> No
                 await session.commit()
 
                 # Отключаем в Remnawave панели (вне транзакции)
-                if user.remnawave_uuid:
+                from app.config import settings
+
+                if settings.is_multi_tariff_enabled():
+                    await session.refresh(user, ['subscriptions'])
+                    for sub in user.subscriptions or []:
+                        if sub.remnawave_uuid:
+                            await subscription_service.disable_remnawave_user(sub.remnawave_uuid)
+                elif user.remnawave_uuid:
                     await subscription_service.disable_remnawave_user(user.remnawave_uuid)
 
                 logger.info(

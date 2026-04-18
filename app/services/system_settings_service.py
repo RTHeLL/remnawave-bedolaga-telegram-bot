@@ -91,6 +91,9 @@ class BotConfigurationService:
         'KASSA_AI': '💳 KassaAI',
         'RIOPAY': '💳 RioPay',
         'SEVERPAY': '💳 SeverPay',
+        'PAYPEAR': '💳 PayPear',
+        'ROLLYPAY': '💳 RollyPay',
+        'AURAPAY': '💳 AuraPay',
         'YOOKASSA': '🟣 YooKassa',
         'PLATEGA': '💳 {platega_name}',
         'TRIBUTE': '🎁 Tribute',
@@ -152,6 +155,9 @@ class BotConfigurationService:
         'FREEKASSA': 'Freekassa: ID магазина, API ключ, секретные слова и вебхуки.',
         'KASSA_AI': 'KassaAI: отдельная платёжка api.fk.life с СБП, картами и SberPay.',
         'RIOPAY': 'RioPay: платёжная система api.riopay.online с поддержкой карт и СБП.',
+        'PAYPEAR': 'PayPear: платёжная система api.paypear.ru с поддержкой карт, СБП, SberPay и T-Pay.',
+        'ROLLYPAY': 'RollyPay: платёжный шлюз rollypay.io с СБП, картами и криптовалютой.',
+        'AURAPAY': 'AuraPay: платёжный шлюз aurapay.tech с поддержкой карт и СБП.',
         'PLATEGA': '{platega_name}: merchant ID, секрет, ссылки возврата и методы оплаты.',
         'MULENPAY': 'Платежи {mulenpay_name} и параметры магазина.',
         'PAL24': 'PAL24 / PayPalych подключения и лимиты.',
@@ -243,6 +249,8 @@ class BotConfigurationService:
         'PRICE_360_DAYS': 'SUBSCRIPTION_PRICES',
         'PAID_SUBSCRIPTION_USER_TAG': 'SUBSCRIPTION_PRICES',
         'TRAFFIC_PACKAGES_CONFIG': 'TRAFFIC_PACKAGES',
+        'MULTI_TARIFF_ENABLED': 'SUBSCRIPTIONS_CORE',
+        'MAX_ACTIVE_SUBSCRIPTIONS': 'SUBSCRIPTIONS_CORE',
         'BASE_PROMO_GROUP_PERIOD_DISCOUNTS_ENABLED': 'SUBSCRIPTIONS_CORE',
         'BASE_PROMO_GROUP_PERIOD_DISCOUNTS': 'SUBSCRIPTIONS_CORE',
         'DEFAULT_AUTOPAY_ENABLED': 'AUTOPAY',
@@ -361,6 +369,9 @@ class BotConfigurationService:
         'KASSA_AI_': 'KASSA_AI',
         'RIOPAY_': 'RIOPAY',
         'SEVERPAY_': 'SEVERPAY',
+        'PAYPEAR_': 'PAYPEAR',
+        'ROLLYPAY_': 'ROLLYPAY',
+        'AURAPAY_': 'AURAPAY',
         'PLATEGA_': 'PLATEGA',
         'MULENPAY_': 'MULENPAY',
         'PAL24_': 'PAL24',
@@ -560,6 +571,29 @@ class BotConfigurationService:
             'format': 'Выберите сквад из списка или очистите значение.',
             'example': 'd4aa2b8c-9a36-4f31-93a2-6f07dad05fba',
             'warning': 'Убедитесь, что выбранный сквад активен и доступен для подписки.',
+        },
+        'MULTI_TARIFF_ENABLED': {
+            'description': (
+                'Разрешает пользователям покупать несколько тарифов одновременно. '
+                'Каждый тариф создаёт отдельную подписку с собственными серверами и лимитами.'
+            ),
+            'format': 'Булево значение.',
+            'example': 'true',
+            'warning': (
+                'Работает только в режиме продаж «Тарифы». '
+                'При включении синхронизация с панелью переключается на мультитарифный режим.'
+            ),
+            'dependencies': 'SALES_MODE=tariffs, MAX_ACTIVE_SUBSCRIPTIONS',
+        },
+        'MAX_ACTIVE_SUBSCRIPTIONS': {
+            'description': (
+                'Максимальное количество одновременных активных подписок у одного пользователя. '
+                'Применяется только в мультитарифном режиме.'
+            ),
+            'format': 'Целое число от 1 и выше.',
+            'example': '10',
+            'warning': 'Большое значение может усложнить управление подписками для пользователя.',
+            'dependencies': 'MULTI_TARIFF_ENABLED',
         },
         'DEVICES_SELECTION_ENABLED': {
             'description': 'Разрешает пользователям выбирать количество устройств при покупке и продлении подписки.',
@@ -916,6 +950,11 @@ class BotConfigurationService:
         },
         'WEBHOOK_NOTIFY_DEVICES': {
             'description': 'Уведомления о подключении и отключении устройств.',
+            'format': 'Булево значение.',
+            'example': 'true',
+        },
+        'WEBHOOK_NOTIFY_TORRENT_DETECTED': {
+            'description': 'Уведомление пользователю при обнаружении торрент-трафика.',
             'format': 'Булево значение.',
             'example': 'true',
         },

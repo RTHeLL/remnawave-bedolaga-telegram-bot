@@ -133,7 +133,7 @@ async def route_payment_by_method(
             )
         return True
 
-    if payment_method in ('kassa_ai', 'kassa_ai_sbp', 'kassa_ai_card'):
+    if payment_method in ('kassa_ai', 'kassa_ai_sbp', 'kassa_ai_card', 'kassa_ai_sberpay'):
         from .kassa_ai import process_kassa_ai_payment_amount
 
         async with AsyncSessionLocal() as db:
@@ -147,6 +147,27 @@ async def route_payment_by_method(
 
         async with AsyncSessionLocal() as db:
             await process_severpay_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
+    if payment_method == 'paypear':
+        from .paypear import process_paypear_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_paypear_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
+    if payment_method == 'rollypay':
+        from .rollypay import process_rollypay_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_rollypay_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
+    if payment_method == 'aurapay':
+        from .aurapay import process_aurapay_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_aurapay_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
     if payment_method == 'riopay':
@@ -701,6 +722,7 @@ def register_balance_handlers(dp: Dispatcher):
 
     from .kassa_ai import (
         start_kassa_ai_card_topup,
+        start_kassa_ai_sberpay_topup,
         start_kassa_ai_sbp_topup,
         start_kassa_ai_topup,
     )
@@ -708,6 +730,7 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(start_kassa_ai_topup, F.data == 'topup_kassa_ai')
     dp.callback_query.register(start_kassa_ai_sbp_topup, F.data == 'topup_kassa_ai_sbp')
     dp.callback_query.register(start_kassa_ai_card_topup, F.data == 'topup_kassa_ai_card')
+    dp.callback_query.register(start_kassa_ai_sberpay_topup, F.data == 'topup_kassa_ai_sberpay')
 
     from .riopay import start_riopay_topup
 
@@ -716,6 +739,18 @@ def register_balance_handlers(dp: Dispatcher):
     from .severpay import start_severpay_topup
 
     dp.callback_query.register(start_severpay_topup, F.data == 'topup_severpay')
+
+    from .paypear import start_paypear_topup
+
+    dp.callback_query.register(start_paypear_topup, F.data == 'topup_paypear')
+
+    from .rollypay import start_rollypay_topup
+
+    dp.callback_query.register(start_rollypay_topup, F.data == 'topup_rollypay')
+
+    from .aurapay import start_aurapay_topup
+
+    dp.callback_query.register(start_aurapay_topup, F.data == 'topup_aurapay')
 
     from .mulenpay import check_mulenpay_payment_status
 

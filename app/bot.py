@@ -67,6 +67,7 @@ from app.middlewares.blacklist import BlacklistMiddleware
 from app.middlewares.button_stats import ButtonStatsMiddleware
 from app.middlewares.chat_type_filter import ChatTypeFilterMiddleware
 from app.middlewares.context_binding import ContextVarsMiddleware
+from app.middlewares.display_name_restriction import DisplayNameRestrictionMiddleware
 from app.middlewares.global_error import GlobalErrorMiddleware
 from app.middlewares.logging import LoggingMiddleware
 from app.middlewares.maintenance import MaintenanceMiddleware
@@ -162,8 +163,12 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     dp.message.middleware(AuthMiddleware())
     dp.callback_query.middleware(AuthMiddleware())
     dp.pre_checkout_query.middleware(AuthMiddleware())
+    display_name_restriction = DisplayNameRestrictionMiddleware()
+    dp.message.middleware(display_name_restriction)
+    dp.callback_query.middleware(display_name_restriction)
     dp.message.middleware(SubscriptionStatusMiddleware())
     dp.callback_query.middleware(SubscriptionStatusMiddleware())
+    dp.pre_checkout_query.middleware(SubscriptionStatusMiddleware())
     start.register_handlers(dp)
     menu.register_handlers(dp)
     subscription.register_handlers(dp)
@@ -275,12 +280,28 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
         except Exception as e:
             logger.warning('Failed to load menu layout cache', error=e)
 
+    try:
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        await remnawave_retry_queue.start()
+        logger.info('RemnaWave retry queue запущен')
+    except Exception as e:
+        logger.error('Ошибка запуска RemnaWave retry queue', error=e)
+
     logger.info('Бот успешно настроен')
 
     return bot, dp
 
 
 async def shutdown_bot():
+    try:
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        await remnawave_retry_queue.stop()
+        logger.info('RemnaWave retry queue остановлен')
+    except Exception as e:
+        logger.error('Ошибка остановки RemnaWave retry queue', error=e)
+
     try:
         await maintenance_service.stop_monitoring()
         logger.info('Мониторинг техработ остановлен')

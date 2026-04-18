@@ -3,7 +3,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.database.models import PromoGroup, User, UserPromoGroup
+from app.database.models import PromoGroup, Subscription, User, UserPromoGroup
 
 
 def _normalize_period_discounts(period_discounts: dict[int, int] | None) -> dict[int, int]:
@@ -166,7 +166,7 @@ async def update_promo_group(
         group.device_discount_percent = max(0, min(100, device_discount_percent))
     if period_discounts is not None:
         normalized_period_discounts = _normalize_period_discounts(period_discounts)
-        group.period_discounts = normalized_period_discounts or None
+        group.period_discounts = normalized_period_discounts if normalized_period_discounts else None
     if auto_assign_total_spent_kopeks is not None:
         value = max(0, auto_assign_total_spent_kopeks)
         group.auto_assign_total_spent_kopeks = value if value > 0 else None
@@ -259,7 +259,7 @@ async def get_promo_group_members(
 ) -> list[User]:
     result = await db.execute(
         select(User)
-        .options(selectinload(User.subscription))
+        .options(selectinload(User.subscriptions).selectinload(Subscription.tariff))
         .where(User.promo_group_id == group_id)
         .order_by(User.created_at.desc())
         .offset(offset)
