@@ -115,6 +115,12 @@ class YooKassaService:
             builder.set_receipt(receipt_data_dict)
 
             # Рекуррентные платежи: сохранение карты
+            logger.info(
+                'Попытка сохранения карты для рекуррентных платежей',
+                recurrent_enabled=settings.YOOKASSA_RECURRENT_ENABLED,
+                recurrent_sbp_enabled=settings.YOOKASSA_RECURRENT_SBP_ENABLED,
+                recurrent_required=settings.YOOKASSA_RECURRENT_REQUIRED,
+            )
             if settings.YOOKASSA_RECURRENT_ENABLED or settings.YOOKASSA_RECURRENT_SBP_ENABLED:
                 if settings.YOOKASSA_RECURRENT_REQUIRED:
                     logger.info('Сохранение карты для рекуррентных платежей')
