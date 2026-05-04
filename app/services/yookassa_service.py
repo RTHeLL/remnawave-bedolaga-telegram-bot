@@ -117,6 +117,7 @@ class YooKassaService:
             # Рекуррентные платежи: сохранение карты
             if settings.YOOKASSA_RECURRENT_ENABLED or settings.YOOKASSA_RECURRENT_SBP_ENABLED:
                 if settings.YOOKASSA_RECURRENT_REQUIRED:
+                    logger.info('Сохранение карты для рекуррентных платежей')
                     builder.set_save_payment_method(True)
                 # Если не required — не устанавливаем, YooKassa покажет чекбокс
 
