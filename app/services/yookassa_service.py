@@ -115,7 +115,7 @@ class YooKassaService:
             builder.set_receipt(receipt_data_dict)
 
             # Рекуррентные платежи: сохранение карты
-            if settings.YOOKASSA_RECURRENT_ENABLED or settings.YOOKASSA_RECURRENT_SBP_ENABLED:
+            if settings.YOOKASSA_RECURRENT_ENABLED:
                 if settings.YOOKASSA_RECURRENT_REQUIRED:
                     builder.set_save_payment_method(True)
                 # Если не required — не устанавливаем, YooKassa покажет чекбокс
@@ -227,6 +227,12 @@ class YooKassaService:
             receipt_data_dict: dict[str, Any] = {'customer': customer_contact_for_receipt, 'items': receipt_items_list}
 
             builder.set_receipt(receipt_data_dict)
+
+            if settings.YOOKASSA_RECURRENT_SBP_ENABLED:
+                logger.info('Рекуррентные платежи через СБП включены')
+                if settings.YOOKASSA_RECURRENT_REQUIRED:
+                    logger.info('Сохранение карты для рекуррентных платежей через СБП')
+                    builder.set_save_payment_method(True)
 
             idempotence_key = str(uuid.uuid4())
 
