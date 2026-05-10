@@ -351,7 +351,7 @@ async def _process_single_subscription(
             logger.warning('Ошибка создания локальной записи рекуррентного платежа', error=e)
 
         # Уведомляем пользователя
-        if bot and user.telegram_id:
+        if settings.RECURRENT_PAYMENT_NOTIFICATIONS_ENABLED and (bot and user.telegram_id):
             try:
                 from app.localization.texts import get_texts
 

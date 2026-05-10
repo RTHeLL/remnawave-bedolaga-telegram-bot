@@ -227,7 +227,6 @@ class MonitoringService:
                 # ВАЖНО: autopay ПЕРЕД check_expired — иначе подписки с автоплатой
                 # экспайрятся до того, как autopay успеет их продлить
                 # Продление с баланса работает всегда, если у подписки autopay_enabled=True
-                await self._process_autopayments(db)
                 # Рекуррентные автоплатежи с карты: требуют ENABLE_AUTOPAY + YOOKASSA_RECURRENT_ENABLED
                 if settings.ENABLE_AUTOPAY and settings.YOOKASSA_RECURRENT_ENABLED:
                     try:
@@ -240,6 +239,8 @@ class MonitoringService:
                             error=recurrent_error,
                             exc_info=True,
                         )
+
+                await self._process_autopayments(db)
                 await self._check_expired_subscriptions(db)
                 await self._check_expiring_subscriptions(db)
                 await self._check_trial_expiring_soon(db)
@@ -1424,17 +1425,18 @@ class MonitoringService:
                                 )
 
                             # Send notification via appropriate channel
-                            if user.telegram_id and self.bot:
-                                await self._send_autopay_success_notification(
-                                    user, charge_amount, autopay_period, subscription=subscription
-                                )
-                            elif not user.telegram_id:
-                                # Email-only user - use notification delivery service
-                                await notification_delivery_service.notify_autopay_success(
-                                    user=user,
-                                    amount_kopeks=charge_amount,
-                                    new_expires_at=subscription.end_date,
-                                )
+                            if settings.AUTOPAY_SUCCESS_NOTIFICATIONS_ENABLED:
+                                if user.telegram_id and self.bot:
+                                    await self._send_autopay_success_notification(
+                                        user, charge_amount, autopay_period, subscription=subscription
+                                    )
+                                elif not user.telegram_id:
+                                    # Email-only user - use notification delivery service
+                                    await notification_delivery_service.notify_autopay_success(
+                                        user=user,
+                                        amount_kopeks=charge_amount,
+                                        new_expires_at=subscription.end_date,
+                                    )
 
                             processed_count += 1
                             self._notified_users.add(autopay_key)
